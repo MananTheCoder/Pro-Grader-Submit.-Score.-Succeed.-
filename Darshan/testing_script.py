@@ -9,17 +9,16 @@ questions_path = os.path.join(base_path, "Questions")
 submissions_path = os.path.join(base_path, "Submissions")
 results_path = os.path.join(base_path, "Results")
 marks_per_question = {
-    "Ques1": 15,
-    "Ques2": 5,
-    "Ques3": 10,
-    "Ques4": 10,
-    "Ques5": 5,
-    "Ques6": 10,
-    "Ques7": 15,
-    "Ques8": 15,
-    "Ques9": 5,
-    "Ques10": 10,
-    "Ques11": 5,
+    "Ques1": 20,
+    "Ques2": 20,
+    "Ques3": 20,
+    "Ques4": 20,
+    "Ques5": 30,
+    "Ques6": 30,
+    "Ques7": 50,
+    "Ques8": 40,
+    "Ques9": 0,
+    "Ques10": 30
 }
 
 
@@ -38,16 +37,48 @@ def get_test_cases(question_folder):  # returns the path to test cases
         print(f"Error while retrieving test cases: {e}")
     return test_cases
 
+# Compile and run C code
+def compile_c(user_code):
+    try:
+        result = subprocess.run(
+            ["gcc", user_code, "-o", "temp_executable"], capture_output=True, text=True
+        )
+        return result.returncode == 0, result.stderr.strip()
+    except subprocess.SubprocessError as e:
+        print(f"Error compiling C code '{user_code}': {e}")  
+        return False, str(e)
+
+
+def run_c(input_data):
+    try:
+        result = subprocess.run(
+            "./temp_executable",
+            input=input_data,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+        return result.stdout.strip() if result.returncode == 0 else "error "+result.stderr.strip()
+    except subprocess.TimeoutExpired:
+        # print("Error: Code execution timed out.")
+        return "TLE"
+    except subprocess.SubprocessError as e:
+        return "error "+str(e)
+
+
 
 def compile_cpp(user_code):
     try:
         result = subprocess.run(
             ["g++", user_code, "-o", "temp_executable"], capture_output=True
         )
-        return result.returncode == 0
+        return result.returncode == 0, result.stderr.strip()
+    # except subprocess.SubprocessError as e:
+    #     print(f"Error compiling C++ code '{user_code}': {e}")
+    #     return False
     except subprocess.SubprocessError as e:
-        print(f"Error compiling C++ code '{user_code}': {e}")
-        return False
+        print(f"Error compiling C++ code '{user_code}': {e}")  
+        return False, str(e)
 
 
 def run_cpp(input_data):
@@ -59,13 +90,13 @@ def run_cpp(input_data):
             text=True,
             timeout=1,
         )
-        return result.stdout.strip() if result.returncode == 0 else None
+        return result.stdout.strip() if result.returncode == 0 else "error "+result.stderr.strip()
     except subprocess.TimeoutExpired:
-        print("Error: Code execution timed out.")
-        return None
+        # print("Error: Code execution timed out.")
+        return "TLE"
     except subprocess.SubprocessError as e:
         print(f"Error running C++ code: {e}")
-        return None
+        return "error "+str(e)
 
 
 def compile_java(user_code, user_path):
@@ -78,10 +109,12 @@ def compile_java(user_code, user_path):
             ["javac", os.path.basename(user_code)], capture_output=True, text=True
         )
         os.chdir(original_dir)
-        return result.returncode == 0
+        return result.returncode == 0, result.stderr.strip()
     except subprocess.SubprocessError as e:
         print(f"Error compiling Java code '{user_code}': {e}")
-        return False
+        # return False
+        return False, str(e)
+        
     finally:
         # Ensure we return to the original directory
         if "original_dir" in locals():
@@ -102,13 +135,14 @@ def run_java(class_name, input_data, user_path):
             timeout=1,
         )
         os.chdir(original_dir)
-        return result.stdout.strip() if result.returncode == 0 else None
+        return result.stdout.strip() if result.returncode == 0 else "error "+result.stderr.strip()
     except subprocess.TimeoutExpired:
-        print("Error: Code execution timed out.")
-        return None
+        # print("Error: Code execution timed out.")
+        return "TLE"
     except subprocess.SubprocessError as e:
         print(f"Error running Java code: {e}")
-        return None
+        return "error "+str(e)
+
     finally:
         # Ensure we return to the original directory
         if "original_dir" in locals():
@@ -138,6 +172,10 @@ def evaluate_user(user_folder, preloaded_test_cases):
         failed_cases = []
 
         questionNum = "".join([i for i in question if i.isdigit()])
+        c_file = os.path.join(
+            user_path,
+            f"{user_folder[0].lower()}_{user_folder.split('_')[1][0].lower()}_{questionNum}.c",
+        )
         cpp_file = os.path.join(
             user_path,
             f"{user_folder[0].lower()}_{user_folder.split('_')[1][0].lower()}_{questionNum}.cpp",
@@ -146,29 +184,19 @@ def evaluate_user(user_folder, preloaded_test_cases):
             user_path,
             f"{user_folder[0].lower()}_{user_folder.split('_')[1][0].lower()}_{questionNum}.java",
         )
-
-        # Evaluate C++ files
-        if os.path.exists(cpp_file) and compile_cpp(cpp_file):
-            for i, (input_data, expected_output) in enumerate(test_cases):
-                current_output = run_cpp(input_data)
-                if current_output == expected_output:
-                    passed_cases += 1
-                else:
-                    failed_cases.append(
-                        {
-                            "test_case": i + 1,
-                            "input": input_data,
-                            "expected_output": expected_output,
-                            "current_output": current_output,
-                        }
-                    )
-
-        # Evaluate Java files
-        elif os.path.exists(java_file):
-            class_name = os.path.splitext(os.path.basename(java_file))[0]
-            if compile_java(java_file, user_path):
+        compilation_error = None
+        runtime_error = None
+        # Evaluate C files
+        if os.path.exists(c_file) :
+            success, compilation_error = compile_c(c_file)
+            if success:
+                compilation_error = None
                 for i, (input_data, expected_output) in enumerate(test_cases):
-                    current_output = run_java(class_name, input_data, user_path)
+                    current_output = run_c(input_data)
+                    if(current_output == "TLE"):
+                        runtime_error = "TLE"
+                    if current_output.startswith("error"):
+                        runtime_error = current_output
                     if current_output == expected_output:
                         passed_cases += 1
                     else:
@@ -180,8 +208,67 @@ def evaluate_user(user_folder, preloaded_test_cases):
                                 "current_output": current_output,
                             }
                         )
+            else:
+                print(f"Compilation error for {c_file}: {compilation_error}")
+
+        # Evaluate C++ files
+        elif os.path.exists(cpp_file):
+            success, compilation_error = compile_cpp(cpp_file)
+            if(success):
+                compilation_error = None
+                for i, (input_data, expected_output) in enumerate(test_cases):
+                    
+                    current_output = run_cpp(input_data)
+                    if(current_output == "TLE"):
+                        runtime_error = "TLE"
+                    if current_output.startswith("error"):
+                        runtime_error = current_output
+                    if current_output == expected_output:
+                        passed_cases += 1
+                    else:
+                        failed_cases.append(
+                            {
+                                "test_case": i + 1,
+                                "input": input_data,
+                                "expected_output": expected_output,
+                                "current_output": current_output,
+                            }
+                        )
+            else:
+                print(f"Compilation error for {cpp_file}: {compilation_error}")
+
+        # Evaluate Java files
+        elif os.path.exists(java_file):
+            class_name = os.path.splitext(os.path.basename(java_file))[0]
+            success, compilation_error = compile_java(java_file, user_path)
+            if success:
+            # if compile_java(java_file, user_path):
+                compilation_error = None
+
+                for i, (input_data, expected_output) in enumerate(test_cases):                    
+                    
+                    current_output = run_java(class_name, input_data, user_path)
+                    # print(f"current_output: {current_output}")
+                    if(current_output == "TLE"):
+                        runtime_error = "TLE"
+                    if current_output.startswith("error"):
+                        runtime_error = current_output
+                    if current_output == expected_output:
+                        passed_cases += 1
+                    else:
+                        failed_cases.append(
+                            {
+                                "test_case": i + 1,
+                                "input": input_data,
+                                "expected_output": expected_output,
+                                "current_output": current_output,
+                            }
+                        )
+            else:
+                print(f"Compilation error for {java_file}: {compilation_error}")
 
         # Calculate marks
+
         question_marks = marks_per_question.get(question, 0)
         score = (passed_cases / total_cases) * question_marks if total_cases else 0
 
@@ -190,34 +277,48 @@ def evaluate_user(user_folder, preloaded_test_cases):
         total_marks_possible += question_marks
 
         # Print results for this question
-        print(f"Question: {question}")
-        print(f"Passed: {passed_cases}/{total_cases} | Marks: {score:.1f}/{question_marks} | Percentage: {(passed_cases / total_cases) * 100:.1f}%" if total_cases else "0%")
+        print(f"Question: {question} ",end="")
+        if(runtime_error):
+            print(f"{runtime_error}")
+        if(compilation_error):
+            print(f" {compilation_error}")
+        print(f"\nPassed: {passed_cases}/{total_cases} | Marks: {score:.1f}/{question_marks} | Percentage: {(passed_cases / total_cases) * 100:.1f}%" if total_cases else "0%")
 
         user_results[question] = {
+            "runtTimeError": runtime_error,
+            "compilation_error": compilation_error,
             "passed": passed_cases,
             "total": total_cases,
             "failed_cases": failed_cases,
             "score": score
         }
 
-        try:
-            with open(os.path.join(results_path, f"{user_folder}.txt"), "w") as f:
-                for question, result in user_results.items():
-                    f.write(
-                        f"{question}: {result['passed']}/{result['total']} test cases passed.\n"
-                    )
-                    if result["passed"] == 0 and len(result["failed_cases"]) == 0:
-                        f.write("No file found for this question.\n\n")
-                    if result["failed_cases"]:
-                        f.write("Failed cases:\n")
-                        for case in result["failed_cases"]:
-                            f.write(f"Test Case {case['test_case']}:\n")
-                            f.write(f"Input:           \n{case['input']}\n\n")
-                            f.write(f"Expected Output: \n{case['expected_output']}\n\n")
-                            f.write(
-                                f"Current Output:  \n{case['current_output']}\n-----------------\n"
-                            )
-        except Exception as e:
+    try:
+        with open(os.path.join(results_path, f"{user_folder}.txt"), "w") as f:
+            # print(f"\n\n {user_results.items()}\n\n")
+            for question, result in user_results.items():
+                f.write(
+                    f"{question}: {result['passed']}/{result['total']} test cases passed.\n"
+                )
+                if not result["compilation_error"] and  result["passed"] == 0 and len(result["failed_cases"]) == 0:
+                    print(f'No file found for {question}')
+                    f.write("No file found for this question.\n\n")
+                if result["failed_cases"]:
+                    f.write("Failed cases:\n")
+                    for case in result["failed_cases"]:
+                        f.write(f"Test Case {case['test_case']}:\n")
+                        f.write(f"Input:           \n{case['input']}\n\n")
+                        f.write(f"Expected Output: \n{case['expected_output']}\n\n")
+                        f.write(
+                            f"Current Output:  \n{case['current_output']}\n\n"
+                        )
+                if result["compilation_error"]:
+                    f.write(f"Compilation Error: {result["compilation_error"] }\n")
+                    
+                if result["runtTimeError"]:
+                    f.write(f"Runtime Error: {result["runtTimeError"] }\n")
+                f.write("\n"+"-"*50+"\n")
+    except Exception as e:
             print(f"Error writing results file: {e}")
 
     # Print two new lines after completing user evaluation
@@ -293,7 +394,7 @@ def main():
             ]
 
         # print("preloaded testcase ", preloaded_test_cases)
-
+        
         for user_folder in sorted(os.listdir(submissions_path)):
             print(f"Evaluating {user_folder}...")
             user_results = evaluate_user(user_folder, preloaded_test_cases)
@@ -311,3 +412,4 @@ if __name__ == "__main__":
     print(f"Execution Time: {time.time() - start:.2f} seconds")
 
 # ma
+
